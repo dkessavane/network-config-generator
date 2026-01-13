@@ -1,0 +1,12 @@
+vlan {{ vlan_admin_id }}
+ name {{ vlan_admin_name }}
+exit
+!
+interface Vlan{{ vlan_admin_id }}
+ description {{ vlan_admin_name }}
+ ip address {{ ip_admin }} {{ subnet_admin }}
+ no ip redirects
+ no ip proxy-arp
+ no ip route-cache
+exit
+!

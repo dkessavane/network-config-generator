@@ -1,0 +1,53 @@
+hostname {{ hostname }}
+!
+username {{ username }} privilege 15 secret {{ userpassword }}
+enable secret {{ secretpassword }}
+!
+vlan {{ vlan_admin_id }}
+ name {{ vlan_admin_name }}
+exit
+!
+interface Vlan {{ vlan_admin_id }}
+ description {{ vlan_admin_name }}
+ ip address {{ ip_admin }} {{ subnet_admin }}
+ no ip redirects
+ no ip proxy-arp
+ no ip route-cache
+exit
+!
+interface Port-channel {{ po_uplink_id }}
+ switchport
+ switchport mode trunk
+ switchport nonegotiate
+exit
+!
+interface TenGigabitEthernet {{ uplink_1 }}
+ description {{ uplink_1_desc }}
+ switchport
+ switchport mode trunk
+ switchport nonegotiate
+ channel-protocol lacp
+ channel-group {{ po_uplink_id }} mode active
+ ip dhcp snooping trust
+exit
+!
+interface TenGigabitEthernet{{ uplink_2 }}
+ description {{ uplink_2_desc }}
+ switchport
+ switchport mode trunk
+ switchport nonegotiate
+ channel-protocol lacp
+ channel-group {{ po_uplink_id }} mode active
+ ip dhcp snooping trust
+exit
+!
+ip default-gateway {{ ip_gateway }}
+ip route 0.0.0.0 0.0.0.0 {{ ip_gateway }} name Default-route
+!
+ip domain name {{ domain_name }}
+ip ssh version 2
+line vty 0 4
+ transport input ssh
+!
+crypto key generate rsa modulus 2048
+!
