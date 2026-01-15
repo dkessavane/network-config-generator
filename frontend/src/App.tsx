@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Plus, Trash2, Copy, Download, Check, Eye, EyeOff } from "lucide-react";
+import { Plus, Trash2, Copy, Download, Check, Eye, EyeOff, Save, History, X } from "lucide-react";
 import { GlobeAltIcon } from "@heroicons/react/24/outline";
 
 function App() {
@@ -27,11 +27,12 @@ function App() {
   ]);
 
   const [copied, setCopied] = useState(false);
-
-  // --- SEPARATE STATES FOR PASSWORD VISIBILITY ---
-  // Independent toggles for each password field
   const [showUserPass, setShowUserPass] = useState(false);
   const [showSecretPass, setShowSecretPass] = useState(false);
+
+  // --- NEW STATES FOR MONGODB ---
+  const [history, setHistory] = useState<any[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
 
   const fieldLabels = {
     hostname: "Hostname",
@@ -62,7 +63,6 @@ function App() {
     setInterfaces(updated);
   };
 
-  // Logic to build full config text for copy/preview
   const generateFullConfig = () => {
     let text = `hostname ${config.hostname}\n!\n`;
     text += `username ${config.username} privilege 15 secret ${config.userpassword || "********"}\n`;
@@ -91,6 +91,40 @@ function App() {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  // --- NEW MONGODB HANDLERS ---
+  const saveToDatabase = async () => {
+    const payload = { ...config, interfaces };
+    try {
+      const response = await fetch("http://127.0.0.1:8000/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (response.ok) alert("Configuration saved to MongoDB!");
+    } catch (error) {
+      alert("Error saving to database.");
+    }
+  };
+
+  const fetchHistory = async () => {
+    try {
+      const response = await fetch("http://127.0.0.1:8000/history");
+      const data = await response.json();
+      setHistory(data);
+      setShowHistory(true);
+    } catch (error) {
+      alert("Error fetching history.");
+    }
+  };
+
+  const loadConfigFromHistory = (item: any) => {
+    // Extract config and interfaces from the history item
+    const { _id, interfaces: savedInterfaces, ...savedConfig } = item;
+    setConfig(savedConfig);
+    setInterfaces(savedInterfaces || []);
+    setShowHistory(false);
+  };
+
   const downloadConfig = async () => {
     const payload = { ...config, interfaces };
     try {
@@ -114,9 +148,6 @@ function App() {
 
   return (
     <div className="h-screen bg-net-dark text-white p-8 font-sans relative overflow-hidden flex flex-col">
-      <div className="absolute inset-0 z-0 h-full w-full">
-      </div>
-
       <div className="relative z-10 max-w-7xl mx-auto w-full flex flex-col h-full">
         {/* Header Section */}
         <div className="flex justify-between items-center mb-8 border-b border-gray-800 pb-4 shrink-0">
@@ -125,25 +156,56 @@ function App() {
             <span className="text-xl font-bold italic">Network Lab</span>
           </div>
           <div className="flex gap-3">
+            <button onClick={fetchHistory} className="bg-slate-800 border border-slate-600 px-4 py-1 rounded-md text-sm flex items-center gap-2 hover:border-blue-400 transition-all">
+              <History size={16} /> History
+            </button>
+            <button onClick={saveToDatabase} className="bg-green-600 border border-green-500 px-4 py-1 rounded-md text-sm flex items-center gap-2 hover:border-green-400 transition-all">
+              <Save size={16} /> Save to DB
+            </button>
             <button onClick={copyConfig} className="bg-slate-800 border border-slate-600 px-4 py-1 rounded-md text-sm flex items-center gap-2 hover:border-blue-400 transition-all">
               {copied ? <Check size={16} className="text-green-400" /> : <Copy size={16} />}
               {copied ? "Copied!" : "Copy"}
             </button>
             <button onClick={downloadConfig} className="bg-blue-600 border border-blue-500 px-4 py-1 rounded-md text-sm flex items-center gap-2 hover:border-blue-500 transition-all">
-              <Download size={16} /> Download configuration
+              <Download size={16} /> Download
             </button>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-10 items-stretch flex-1 min-h-0 pb-4">
+        {/* --- HISTORY MODAL --- */}
+        {showHistory && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+            <div className="bg-slate-900 border border-slate-700 w-full max-w-2xl rounded-[2rem] p-8 shadow-2xl flex flex-col max-h-[80vh]">
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="text-xl font-bold flex items-center gap-2"><History className="text-blue-400" /> Saved Configurations</h2>
+                <button onClick={() => setShowHistory(false)} className="text-gray-400 hover:text-white"><X /></button>
+              </div>
+              <div className="overflow-y-auto space-y-3 custom-scrollbar pr-2">
+                {history.length === 0 ? <p className="text-gray-500 text-center">No configurations found in database.</p> :
+                  history.map((item) => (
+                    <div key={item._id} className="flex justify-between items-center p-4 bg-slate-800/50 border border-slate-700 rounded-xl hover:border-blue-500 transition-all">
+                      <div>
+                        <p className="font-bold text-blue-300">{item.hostname}</p>
+                        <p className="text-xs text-gray-400">VLAN {item.vlan_admin_id} | {item.domain_name}</p>
+                      </div>
+                      <button onClick={() => loadConfigFromHistory(item)} className="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded-lg text-xs font-bold transition-colors">
+                        LOAD CONFIG
+                      </button>
+                    </div>
+                  ))
+                }
+              </div>
+            </div>
+          </div>
+        )}
 
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-10 items-stretch flex-1 min-h-0 pb-4">
           {/* LEFT COLUMN: Input Form */}
           <div className="flex flex-col gap-6 overflow-y-auto pr-2 custom-scrollbar">
             <div className="bg-net-card/50 backdrop-blur-sm border border-slate-700 p-8 rounded-[2rem] shadow-2xl shrink-0">
               <p className="text-center text-gray-300 mb-6 text-sm uppercase tracking-widest font-bold">Variables</p>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {Object.entries(config).map(([key, value]) => {
-                  // Determine visibility for each field
                   const isUserPass = key === "userpassword";
                   const isSecretPass = key === "secretpassword";
                   const isVisible = isUserPass ? showUserPass : isSecretPass ? showSecretPass : true;
@@ -160,7 +222,6 @@ function App() {
                           onChange={(e) => setConfig({ ...config, [key]: e.target.value })}
                           className="bg-slate-900 border border-slate-700 rounded-md px-3 py-2 text-sm focus:ring-1 focus:ring-blue-400 outline-none transition-all text-gray-200 w-full pr-10"
                         />
-                        {/* INDEPENDENT TOGGLES */}
                         {isUserPass && (
                           <button type="button" onClick={() => setShowUserPass(!showUserPass)} className="absolute right-3 text-gray-500 hover:text-blue-400 transition-colors">
                             {showUserPass ? <EyeOff size={16} /> : <Eye size={16} />}
@@ -178,6 +239,7 @@ function App() {
               </div>
             </div>
 
+            {/* Interfaces section */}
             <div className="bg-net-card/50 backdrop-blur-sm border border-slate-700 p-8 rounded-[2rem] shadow-2xl flex flex-col min-h-[300px]">
               <div className="flex justify-between items-center mb-6">
                 <p className="text-gray-300 text-xs uppercase tracking-widest font-bold font-mono">Interfaces</p>
@@ -204,11 +266,10 @@ function App() {
             </div>
           </div>
 
-          {/* RIGHT COLUMN: Output Preview (Synchronized with left toggles) */}
+          {/* RIGHT COLUMN: Output Preview */}
           <div className="flex flex-col h-full min-h-0">
             <div className="bg-black rounded-[2rem] p-6 shadow-2xl border border-slate-800 flex flex-col h-full overflow-hidden">
               <p className="text-green-400 text-center mb-4 font-mono text-sm uppercase tracking-widest shrink-0">OUTPUT</p>
-
               <div className="flex-1 bg-[#0d0d0d] p-8 rounded-xl font-mono text-sm leading-relaxed text-gray-300 overflow-y-auto border border-slate-900 custom-scrollbar">
                 <div className="space-y-1 whitespace-pre-wrap">
                   <p>hostname {config.hostname}</p>
@@ -226,12 +287,10 @@ function App() {
                     </span>
                   </p>
                   <p className="text-gray-700">!</p>
-
                   <p>vlan {config.vlan_admin_id}</p>
                   <p className="ml-5">name {config.vlan_admin_name}</p>
                   <p>exit</p>
                   <p className="text-gray-700">!</p>
-
                   <p>interface Vlan{config.vlan_admin_id}</p>
                   <p className="ml-5">description {config.vlan_admin_name}</p>
                   <p className="ml-5">ip address {config.ip_admin} {config.subnet_admin}</p>
@@ -240,14 +299,12 @@ function App() {
                   <p className="ml-5">no ip route-cache</p>
                   <p>exit</p>
                   <p className="text-gray-700">!</p>
-
                   <p>interface Port-channel{config.po_uplink_id}</p>
                   <p className="ml-5">switchport</p>
                   <p className="ml-5">switchport mode trunk</p>
                   <p className="ml-5">switchport nonegotiate</p>
                   <p>exit</p>
                   <p className="text-gray-700">!</p>
-
                   {interfaces.map((iface, i) => iface.name && (
                     <div key={i} className="py-1">
                       <p>interface {iface.name}</p>
@@ -262,11 +319,9 @@ function App() {
                       <p className="text-gray-700">!</p>
                     </div>
                   ))}
-
                   <p>ip default-gateway {config.ip_gateway}</p>
                   <p>ip route 0.0.0.0 0.0.0.0 {config.ip_gateway} name Default-route</p>
                   <p className="text-gray-700">!</p>
-
                   <p>ip domain name {config.domain_name}</p>
                   <p>ip ssh version 2</p>
                   <p>line vty 0 4</p>
