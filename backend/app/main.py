@@ -7,7 +7,7 @@ import os
 
 # --- MONGODB IMPORTS ---
 from motor.motor_asyncio import AsyncIOMotorClient
-from config import settings  # Importing the settings we just created
+from .config import settings  # Importing the settings we just created
 
 app = FastAPI()
 

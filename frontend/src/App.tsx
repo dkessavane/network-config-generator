@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Plus, Trash2, Copy, Download, Check, Eye, EyeOff, Save, History, X } from "lucide-react";
+import { Plus, Trash2, Copy, Download, Check, Eye, EyeOff, Save, History, X, Search } from "lucide-react";
 import { GlobeAltIcon } from "@heroicons/react/24/outline";
 
 function App() {
@@ -30,9 +30,10 @@ function App() {
   const [showUserPass, setShowUserPass] = useState(false);
   const [showSecretPass, setShowSecretPass] = useState(false);
 
-  // --- NEW STATES FOR MONGODB ---
+  // --- MONGODB & SEARCH STATES ---
   const [history, setHistory] = useState<any[]>([]);
   const [showHistory, setShowHistory] = useState(false);
+  const [searchTerm, setSearchTerm] = useState(""); // État pour la recherche
 
   const fieldLabels = {
     hostname: "Hostname",
@@ -91,7 +92,6 @@ function App() {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  // --- NEW MONGODB HANDLERS ---
   const saveToDatabase = async () => {
     const payload = { ...config, interfaces };
     try {
@@ -100,9 +100,10 @@ function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      if (response.ok) alert("Configuration saved to MongoDB!");
+      return response.ok;
     } catch (error) {
-      alert("Error saving to database.");
+      console.error("Error saving to database:", error);
+      return false;
     }
   };
 
@@ -118,16 +119,16 @@ function App() {
   };
 
   const loadConfigFromHistory = (item: any) => {
-    // Extract config and interfaces from the history item
     const { _id, interfaces: savedInterfaces, ...savedConfig } = item;
     setConfig(savedConfig);
     setInterfaces(savedInterfaces || []);
     setShowHistory(false);
   };
 
-  const downloadConfig = async () => {
+  const downloadAndSaveConfig = async () => {
     const payload = { ...config, interfaces };
     try {
+      await saveToDatabase();
       const response = await fetch("http://127.0.0.1:8000/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -141,10 +142,17 @@ function App() {
       a.href = url;
       a.download = `${config.hostname}_config.txt`;
       a.click();
+      alert("Config downloaded and saved to Database!");
     } catch (error) {
       alert("Error: FastAPI server is not running on port 8000.");
     }
   };
+
+  // --- FILTRAGE DE L'HISTORIQUE ---
+  const filteredHistory = history.filter((item) => 
+    item.hostname.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    item.vlan_admin_id.toString().includes(searchTerm)
+  );
 
   return (
     <div className="h-screen bg-net-dark text-white p-8 font-sans relative overflow-hidden flex flex-col">
@@ -159,15 +167,12 @@ function App() {
             <button onClick={fetchHistory} className="bg-slate-800 border border-slate-600 px-4 py-1 rounded-md text-sm flex items-center gap-2 hover:border-blue-400 transition-all">
               <History size={16} /> History
             </button>
-            <button onClick={saveToDatabase} className="bg-green-600 border border-green-500 px-4 py-1 rounded-md text-sm flex items-center gap-2 hover:border-green-400 transition-all">
-              <Save size={16} /> Save to DB
-            </button>
             <button onClick={copyConfig} className="bg-slate-800 border border-slate-600 px-4 py-1 rounded-md text-sm flex items-center gap-2 hover:border-blue-400 transition-all">
               {copied ? <Check size={16} className="text-green-400" /> : <Copy size={16} />}
               {copied ? "Copied!" : "Copy"}
             </button>
-            <button onClick={downloadConfig} className="bg-blue-600 border border-blue-500 px-4 py-1 rounded-md text-sm flex items-center gap-2 hover:border-blue-500 transition-all">
-              <Download size={16} /> Download
+            <button onClick={downloadAndSaveConfig} className="bg-blue-600 border border-blue-500 px-4 py-1 rounded-md text-sm flex items-center gap-2 hover:border-blue-400 transition-all font-bold">
+              <Download size={16} /> Download & Save
             </button>
           </div>
         </div>
@@ -178,11 +183,24 @@ function App() {
             <div className="bg-slate-900 border border-slate-700 w-full max-w-2xl rounded-[2rem] p-8 shadow-2xl flex flex-col max-h-[80vh]">
               <div className="flex justify-between items-center mb-6">
                 <h2 className="text-xl font-bold flex items-center gap-2"><History className="text-blue-400" /> Saved Configurations</h2>
-                <button onClick={() => setShowHistory(false)} className="text-gray-400 hover:text-white"><X /></button>
+                <button onClick={() => {setShowHistory(false); setSearchTerm("");}} className="text-gray-400 hover:text-white"><X /></button>
               </div>
-              <div className="overflow-y-auto space-y-3 custom-scrollbar pr-2">
-                {history.length === 0 ? <p className="text-gray-500 text-center">No configurations found in database.</p> :
-                  history.map((item) => (
+
+              {/* BARRE DE RECHERCHE AJOUTÉE ICI */}
+              <div className="relative mb-6">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" size={18} />
+                <input 
+                  type="text"
+                  placeholder="Search by hostname or VLAN..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl py-3 pl-10 pr-4 text-sm outline-none focus:border-blue-500 transition-all"
+                />
+              </div>
+
+              <div className="overflow-y-auto space-y-3 custom-scrollbar pr-2 flex-1">
+                {filteredHistory.length === 0 ? <p className="text-gray-500 text-center">No results found.</p> :
+                  filteredHistory.map((item) => (
                     <div key={item._id} className="flex justify-between items-center p-4 bg-slate-800/50 border border-slate-700 rounded-xl hover:border-blue-500 transition-all">
                       <div>
                         <p className="font-bold text-blue-300">{item.hostname}</p>
@@ -199,8 +217,8 @@ function App() {
           </div>
         )}
 
+        {/* Le reste de ton code (Formulaire et Output) reste identique */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-10 items-stretch flex-1 min-h-0 pb-4">
-          {/* LEFT COLUMN: Input Form */}
           <div className="flex flex-col gap-6 overflow-y-auto pr-2 custom-scrollbar">
             <div className="bg-net-card/50 backdrop-blur-sm border border-slate-700 p-8 rounded-[2rem] shadow-2xl shrink-0">
               <p className="text-center text-gray-300 mb-6 text-sm uppercase tracking-widest font-bold">Variables</p>
@@ -209,7 +227,6 @@ function App() {
                   const isUserPass = key === "userpassword";
                   const isSecretPass = key === "secretpassword";
                   const isVisible = isUserPass ? showUserPass : isSecretPass ? showSecretPass : true;
-
                   return (
                     <div key={key} className="flex flex-col gap-1 relative">
                       <label className="text-[10px] text-gray-400 uppercase font-bold ml-1">
@@ -239,7 +256,6 @@ function App() {
               </div>
             </div>
 
-            {/* Interfaces section */}
             <div className="bg-net-card/50 backdrop-blur-sm border border-slate-700 p-8 rounded-[2rem] shadow-2xl flex flex-col min-h-[300px]">
               <div className="flex justify-between items-center mb-6">
                 <p className="text-gray-300 text-xs uppercase tracking-widest font-bold font-mono">Interfaces</p>
@@ -266,26 +282,16 @@ function App() {
             </div>
           </div>
 
-          {/* RIGHT COLUMN: Output Preview */}
           <div className="flex flex-col h-full min-h-0">
             <div className="bg-black rounded-[2rem] p-6 shadow-2xl border border-slate-800 flex flex-col h-full overflow-hidden">
               <p className="text-green-400 text-center mb-4 font-mono text-sm uppercase tracking-widest shrink-0">OUTPUT</p>
               <div className="flex-1 bg-[#0d0d0d] p-8 rounded-xl font-mono text-sm leading-relaxed text-gray-300 overflow-y-auto border border-slate-900 custom-scrollbar">
                 <div className="space-y-1 whitespace-pre-wrap">
+                  {/* ... Contenu de l'output identique au tien ... */}
                   <p>hostname {config.hostname}</p>
                   <p className="text-gray-700">!</p>
-                  <p>
-                    username {config.username} privilege 15 secret{" "}
-                    <span className="text-red-500 font-bold">
-                      {showUserPass ? (config.userpassword || "none") : "********"}
-                    </span>
-                  </p>
-                  <p>
-                    enable secret{" "}
-                    <span className="text-red-500 font-bold">
-                      {showSecretPass ? (config.secretpassword || "none") : "********"}
-                    </span>
-                  </p>
+                  <p>username {config.username} privilege 15 secret <span className="text-red-500 font-bold">{showUserPass ? (config.userpassword || "none") : "********"}</span></p>
+                  <p>enable secret <span className="text-red-500 font-bold">{showSecretPass ? (config.secretpassword || "none") : "********"}</span></p>
                   <p className="text-gray-700">!</p>
                   <p>vlan {config.vlan_admin_id}</p>
                   <p className="ml-5">name {config.vlan_admin_name}</p>
