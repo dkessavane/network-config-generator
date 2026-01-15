@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Plus, Trash2, Copy, Download, Check, Eye, EyeOff, Save, History, X, Search } from "lucide-react";
+import { Plus, Trash2, Copy, Download, Check, Eye, EyeOff, History, X, Search } from "lucide-react";
 import { GlobeAltIcon } from "@heroicons/react/24/outline";
 
 function App() {
@@ -9,55 +9,73 @@ function App() {
     username: "admin",
     userpassword: "",
     secretpassword: "",
-    vlan_admin_id: "10",
+    vlan_admin_id: 10,
     vlan_admin_name: "ADMIN",
     ip_admin: "192.168.1.1",
     subnet_admin: "255.255.255.0",
-    po_uplink_id: "1",
+    po_uplink_id: 1,
     ip_gateway: "192.168.1.254",
     domain_name: "network.local",
   });
 
   const [interfaces, setInterfaces] = useState([
-    {
-      name: "TenGigabitEthernet1/0/1",
-      description: "Uplink to Core",
-      channel_group: "1",
-    },
+    { name: "TenGigabitEthernet1/0/1", description: "Uplink to Core", channel_group: "1" },
   ]);
 
   const [copied, setCopied] = useState(false);
   const [showUserPass, setShowUserPass] = useState(false);
   const [showSecretPass, setShowSecretPass] = useState(false);
-
-  // --- MONGODB & SEARCH STATES ---
   const [history, setHistory] = useState<any[]>([]);
   const [showHistory, setShowHistory] = useState(false);
-  const [searchTerm, setSearchTerm] = useState(""); // État pour la recherche
+  const [searchTerm, setSearchTerm] = useState("");
 
   const fieldLabels = {
     hostname: "Hostname",
     username: "Username",
     userpassword: "User Password",
     secretpassword: "Enable Secret",
-    vlan_admin_id: "Admin VLAN ID",
+    vlan_admin_id: "Admin VLAN ID (1 - 4094)",
     vlan_admin_name: "Admin VLAN Name",
     ip_admin: "Admin IP Address",
     subnet_admin: "Subnet Mask",
-    po_uplink_id: "Port-Channel ID",
+    po_uplink_id: "Port-Channel ID (1 - 255)",
     ip_gateway: "Default Gateway",
     domain_name: "Domain Name",
   };
 
+  // --- SMART VALIDATORS ---
+  
+  const validateIPChar = (val: string) => {
+    let cleaned = val.replace(/[^0-9.]/g, "");
+    cleaned = cleaned.replace(/\.\.+/g, "."); 
+    const dots = (cleaned.match(/\./g) || []).length;
+    if (dots > 3) {
+        const parts = cleaned.split('.');
+        cleaned = parts.slice(0, 4).join('.');
+    }
+    return cleaned;
+  };
+
+  const handleInputChange = (key: string, value: string) => {
+    let finalValue: any = value;
+    if (key.includes("ip") || key.includes("subnet")) {
+      finalValue = validateIPChar(value);
+    } else if (key === "vlan_admin_id" || key === "po_uplink_id") {
+      const numericString = value.replace(/[^0-9]/g, "");
+      let num = parseInt(numericString);
+      if (isNaN(num) || num < 1) {
+        finalValue = ""; 
+      } else {
+        if (key === "vlan_admin_id") finalValue = num > 4094 ? 4094 : num;
+        if (key === "po_uplink_id") finalValue = num > 255 ? 255 : num;
+      }
+    }
+    setConfig({ ...config, [key]: finalValue });
+  };
+
   // --- HANDLERS ---
-  const addInterface = () => {
-    setInterfaces([...interfaces, { name: "", description: "", channel_group: "" }]);
-  };
-
-  const removeInterface = (index: number) => {
-    setInterfaces(interfaces.filter((_, i) => i !== index));
-  };
-
+  const addInterface = () => setInterfaces([...interfaces, { name: "", description: "", channel_group: "" }]);
+  const removeInterface = (index: number) => setInterfaces(interfaces.filter((_, i) => i !== index));
   const updateInterface = (index: number, field: string, value: string) => {
     const updated = [...interfaces];
     updated[index] = { ...updated[index], [field]: value } as any;
@@ -92,49 +110,19 @@ function App() {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const saveToDatabase = async () => {
-    const payload = { ...config, interfaces };
-    try {
-      const response = await fetch("http://127.0.0.1:8000/save", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      return response.ok;
-    } catch (error) {
-      console.error("Error saving to database:", error);
-      return false;
-    }
-  };
-
-  const fetchHistory = async () => {
-    try {
-      const response = await fetch("http://127.0.0.1:8000/history");
-      const data = await response.json();
-      setHistory(data);
-      setShowHistory(true);
-    } catch (error) {
-      alert("Error fetching history.");
-    }
-  };
-
-  const loadConfigFromHistory = (item: any) => {
-    const { _id, interfaces: savedInterfaces, ...savedConfig } = item;
-    setConfig(savedConfig);
-    setInterfaces(savedInterfaces || []);
-    setShowHistory(false);
-  };
-
   const downloadAndSaveConfig = async () => {
-    const payload = { ...config, interfaces };
+    await fetch("http://127.0.0.1:8000/save", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...config, interfaces }),
+    });
+
     try {
-      await saveToDatabase();
       const response = await fetch("http://127.0.0.1:8000/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ ...config, interfaces }),
       });
-      if (!response.ok) throw new Error("Backend Error");
       const data = await response.json();
       const blob = new Blob([data.config], { type: "text/plain" });
       const url = URL.createObjectURL(blob);
@@ -142,13 +130,15 @@ function App() {
       a.href = url;
       a.download = `${config.hostname}_config.txt`;
       a.click();
-      alert("Config downloaded and saved to Database!");
-    } catch (error) {
-      alert("Error: FastAPI server is not running on port 8000.");
-    }
+    } catch (e) { alert("FastAPI Error"); }
   };
 
-  // --- FILTRAGE DE L'HISTORIQUE ---
+  const fetchHistory = async () => {
+    const res = await fetch("http://127.0.0.1:8000/history");
+    setHistory(await res.json());
+    setShowHistory(true);
+  };
+
   const filteredHistory = history.filter((item) => 
     item.hostname.toLowerCase().includes(searchTerm.toLowerCase()) ||
     item.vlan_admin_id.toString().includes(searchTerm)
@@ -164,14 +154,14 @@ function App() {
             <span className="text-xl font-bold italic">Network Lab</span>
           </div>
           <div className="flex gap-3">
-            <button onClick={fetchHistory} className="bg-slate-800 border border-slate-600 px-4 py-1 rounded-md text-sm flex items-center gap-2 hover:border-blue-400 transition-all">
+            <button onClick={fetchHistory} className="bg-slate-800 border border-slate-600 px-4 py-1 rounded-md text-sm flex items-center gap-2 hover:border-blue-400">
               <History size={16} /> History
             </button>
-            <button onClick={copyConfig} className="bg-slate-800 border border-slate-600 px-4 py-1 rounded-md text-sm flex items-center gap-2 hover:border-blue-400 transition-all">
+            <button onClick={copyConfig} className="bg-slate-800 border border-slate-600 px-4 py-1 rounded-md text-sm flex items-center gap-2 hover:border-blue-400">
               {copied ? <Check size={16} className="text-green-400" /> : <Copy size={16} />}
               {copied ? "Copied!" : "Copy"}
             </button>
-            <button onClick={downloadAndSaveConfig} className="bg-blue-600 border border-blue-500 px-4 py-1 rounded-md text-sm flex items-center gap-2 hover:border-blue-400 transition-all font-bold">
+            <button onClick={downloadAndSaveConfig} className="bg-blue-600 border border-blue-500 px-4 py-1 rounded-md text-sm flex items-center gap-2 font-bold hover:border-blue-400 transition-all">
               <Download size={16} /> Download & Save
             </button>
           </div>
@@ -183,70 +173,50 @@ function App() {
             <div className="bg-slate-900 border border-slate-700 w-full max-w-2xl rounded-[2rem] p-8 shadow-2xl flex flex-col max-h-[80vh]">
               <div className="flex justify-between items-center mb-6">
                 <h2 className="text-xl font-bold flex items-center gap-2"><History className="text-blue-400" /> Saved Configurations</h2>
-                <button onClick={() => {setShowHistory(false); setSearchTerm("");}} className="text-gray-400 hover:text-white"><X /></button>
+                <button onClick={() => setShowHistory(false)} className="text-gray-400 hover:text-white"><X /></button>
               </div>
-
-              {/* BARRE DE RECHERCHE AJOUTÉE ICI */}
-              <div className="relative mb-6">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" size={18} />
-                <input 
-                  type="text"
-                  placeholder="Search by hostname or VLAN..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-xl py-3 pl-10 pr-4 text-sm outline-none focus:border-blue-500 transition-all"
-                />
-              </div>
-
-              <div className="overflow-y-auto space-y-3 custom-scrollbar pr-2 flex-1">
-                {filteredHistory.length === 0 ? <p className="text-gray-500 text-center">No results found.</p> :
-                  filteredHistory.map((item) => (
-                    <div key={item._id} className="flex justify-between items-center p-4 bg-slate-800/50 border border-slate-700 rounded-xl hover:border-blue-500 transition-all">
-                      <div>
-                        <p className="font-bold text-blue-300">{item.hostname}</p>
-                        <p className="text-xs text-gray-400">VLAN {item.vlan_admin_id} | {item.domain_name}</p>
-                      </div>
-                      <button onClick={() => loadConfigFromHistory(item)} className="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded-lg text-xs font-bold transition-colors">
-                        LOAD CONFIG
-                      </button>
+              <input 
+                type="text" placeholder="Search..." value={searchTerm} 
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full bg-slate-950 border border-slate-700 rounded-xl py-2 px-4 mb-4 outline-none focus:border-blue-500"
+              />
+              <div className="overflow-y-auto space-y-3 custom-scrollbar pr-2">
+                {filteredHistory.map((item) => (
+                  <div key={item._id} className="flex justify-between items-center p-4 bg-slate-800/50 border border-slate-700 rounded-xl">
+                    <div>
+                      <p className="font-bold text-blue-300">{item.hostname}</p>
+                      <p className="text-xs text-gray-400">VLAN {item.vlan_admin_id}</p>
                     </div>
-                  ))
-                }
+                    <button onClick={() => { setConfig(item); setShowHistory(false); }} className="bg-blue-600 px-4 py-2 rounded-lg text-xs font-bold">LOAD</button>
+                  </div>
+                ))}
               </div>
             </div>
           </div>
         )}
 
-        {/* Le reste de ton code (Formulaire et Output) reste identique */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-10 items-stretch flex-1 min-h-0 pb-4">
+          {/* LEFT COLUMN */}
           <div className="flex flex-col gap-6 overflow-y-auto pr-2 custom-scrollbar">
             <div className="bg-net-card/50 backdrop-blur-sm border border-slate-700 p-8 rounded-[2rem] shadow-2xl shrink-0">
               <p className="text-center text-gray-300 mb-6 text-sm uppercase tracking-widest font-bold">Variables</p>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {Object.entries(config).map(([key, value]) => {
-                  const isUserPass = key === "userpassword";
-                  const isSecretPass = key === "secretpassword";
-                  const isVisible = isUserPass ? showUserPass : isSecretPass ? showSecretPass : true;
+                  const isPass = key.includes("password");
+                  const isVisible = key === "userpassword" ? showUserPass : showSecretPass;
                   return (
                     <div key={key} className="flex flex-col gap-1 relative">
-                      <label className="text-[10px] text-gray-400 uppercase font-bold ml-1">
-                        {fieldLabels[key as keyof typeof fieldLabels] || key}
-                      </label>
+                      <label className="text-[10px] text-gray-400 uppercase font-bold ml-1">{fieldLabels[key as keyof typeof fieldLabels] || key}</label>
                       <div className="relative flex items-center">
                         <input
-                          type={key.includes("password") && !isVisible ? "password" : "text"}
+                          type={isPass && !isVisible ? "password" : "text"}
                           value={value}
-                          onChange={(e) => setConfig({ ...config, [key]: e.target.value })}
+                          onChange={(e) => handleInputChange(key, e.target.value)}
                           className="bg-slate-900 border border-slate-700 rounded-md px-3 py-2 text-sm focus:ring-1 focus:ring-blue-400 outline-none transition-all text-gray-200 w-full pr-10"
                         />
-                        {isUserPass && (
-                          <button type="button" onClick={() => setShowUserPass(!showUserPass)} className="absolute right-3 text-gray-500 hover:text-blue-400 transition-colors">
-                            {showUserPass ? <EyeOff size={16} /> : <Eye size={16} />}
-                          </button>
-                        )}
-                        {isSecretPass && (
-                          <button type="button" onClick={() => setShowSecretPass(!showSecretPass)} className="absolute right-3 text-gray-500 hover:text-blue-400 transition-colors">
-                            {showSecretPass ? <EyeOff size={16} /> : <Eye size={16} />}
+                        {isPass && (
+                          <button type="button" onClick={() => key === "userpassword" ? setShowUserPass(!showUserPass) : setShowSecretPass(!showSecretPass)} className="absolute right-3 text-gray-500 hover:text-blue-400 transition-colors">
+                            {isVisible ? <EyeOff size={16} /> : <Eye size={16} />}
                           </button>
                         )}
                       </div>
@@ -282,60 +252,68 @@ function App() {
             </div>
           </div>
 
+          {/* RIGHT COLUMN - SYNCED PASSWORDS */}
           <div className="flex flex-col h-full min-h-0">
             <div className="bg-black rounded-[2rem] p-6 shadow-2xl border border-slate-800 flex flex-col h-full overflow-hidden">
               <p className="text-green-400 text-center mb-4 font-mono text-sm uppercase tracking-widest shrink-0">OUTPUT</p>
-              <div className="flex-1 bg-[#0d0d0d] p-8 rounded-xl font-mono text-sm leading-relaxed text-gray-300 overflow-y-auto border border-slate-900 custom-scrollbar">
-                <div className="space-y-1 whitespace-pre-wrap">
-                  {/* ... Contenu de l'output identique au tien ... */}
-                  <p>hostname {config.hostname}</p>
-                  <p className="text-gray-700">!</p>
-                  <p>username {config.username} privilege 15 secret <span className="text-red-500 font-bold">{showUserPass ? (config.userpassword || "none") : "********"}</span></p>
-                  <p>enable secret <span className="text-red-500 font-bold">{showSecretPass ? (config.secretpassword || "none") : "********"}</span></p>
-                  <p className="text-gray-700">!</p>
-                  <p>vlan {config.vlan_admin_id}</p>
-                  <p className="ml-5">name {config.vlan_admin_name}</p>
-                  <p>exit</p>
-                  <p className="text-gray-700">!</p>
-                  <p>interface Vlan{config.vlan_admin_id}</p>
-                  <p className="ml-5">description {config.vlan_admin_name}</p>
-                  <p className="ml-5">ip address {config.ip_admin} {config.subnet_admin}</p>
-                  <p className="ml-5">no ip redirects</p>
-                  <p className="ml-5">no ip proxy-arp</p>
-                  <p className="ml-5">no ip route-cache</p>
-                  <p>exit</p>
-                  <p className="text-gray-700">!</p>
-                  <p>interface Port-channel{config.po_uplink_id}</p>
-                  <p className="ml-5">switchport</p>
-                  <p className="ml-5">switchport mode trunk</p>
-                  <p className="ml-5">switchport nonegotiate</p>
-                  <p>exit</p>
-                  <p className="text-gray-700">!</p>
-                  {interfaces.map((iface, i) => iface.name && (
-                    <div key={i} className="py-1">
-                      <p>interface {iface.name}</p>
-                      <p className="ml-5">description {iface.description}</p>
-                      <p className="ml-5">switchport</p>
-                      <p className="ml-5">switchport mode trunk</p>
-                      <p className="ml-5">switchport nonegotiate</p>
-                      <p className="ml-5">channel-protocol lacp</p>
-                      {iface.channel_group && <p className="ml-5">channel-group {config.po_uplink_id} mode active</p>}
-                      <p className="ml-5">ip dhcp snooping trust</p>
-                      <p>exit</p>
-                      <p className="text-gray-700">!</p>
-                    </div>
-                  ))}
-                  <p>ip default-gateway {config.ip_gateway}</p>
-                  <p>ip route 0.0.0.0 0.0.0.0 {config.ip_gateway} name Default-route</p>
-                  <p className="text-gray-700">!</p>
-                  <p>ip domain name {config.domain_name}</p>
-                  <p>ip ssh version 2</p>
-                  <p>line vty 0 4</p>
-                  <p className="ml-5">transport input ssh</p>
-                  <p className="text-gray-700">!</p>
-                  <p>crypto key generate rsa modulus 2048</p>
-                  <p className="text-gray-700">!</p>
-                </div>
+              <div className="flex-1 bg-[#0d0d0d] p-8 rounded-xl font-mono text-sm leading-relaxed text-gray-300 overflow-y-auto border border-slate-900 custom-scrollbar whitespace-pre-wrap">
+                <p>hostname {config.hostname}</p>
+                <p className="text-gray-700">!</p>
+                <p>
+                  username {config.username} privilege 15 secret{" "}
+                  <span className="text-red-500 font-bold">
+                    {showUserPass ? (config.userpassword || "none") : "********"}
+                  </span>
+                </p>
+                <p>
+                  enable secret{" "}
+                  <span className="text-red-500 font-bold">
+                    {showSecretPass ? (config.secretpassword || "none") : "********"}
+                  </span>
+                </p>
+                <p className="text-gray-700">!</p>
+                <p>vlan {config.vlan_admin_id}</p>
+                <p className="ml-5">name {config.vlan_admin_name}</p>
+                <p>exit</p>
+                <p className="text-gray-700">!</p>
+                <p>interface Vlan{config.vlan_admin_id}</p>
+                <p className="ml-5">description {config.vlan_admin_name}</p>
+                <p className="ml-5">ip address {config.ip_admin} {config.subnet_admin}</p>
+                <p className="ml-5">no ip redirects</p>
+                <p className="ml-5">no ip proxy-arp</p>
+                <p className="ml-5">no ip route-cache</p>
+                <p>exit</p>
+                <p className="text-gray-700">!</p>
+                <p>interface Port-channel{config.po_uplink_id}</p>
+                <p className="ml-5">switchport</p>
+                <p className="ml-5">switchport mode trunk</p>
+                <p className="ml-5">switchport nonegotiate</p>
+                <p>exit</p>
+                <p className="text-gray-700">!</p>
+                {interfaces.map((iface, i) => iface.name && (
+                  <div key={i} className="py-1">
+                    <p>interface {iface.name}</p>
+                    <p className="ml-5">description {iface.description}</p>
+                    <p className="ml-5">switchport</p>
+                    <p className="ml-5">switchport mode trunk</p>
+                    <p className="ml-5">switchport nonegotiate</p>
+                    <p className="ml-5">channel-protocol lacp</p>
+                    {iface.channel_group && <p className="ml-5">channel-group {config.po_uplink_id} mode active</p>}
+                    <p className="ml-5">ip dhcp snooping trust</p>
+                    <p>exit</p>
+                    <p className="text-gray-700">!</p>
+                  </div>
+                ))}
+                <p>ip default-gateway {config.ip_gateway}</p>
+                <p>ip route 0.0.0.0 0.0.0.0 {config.ip_gateway} name Default-route</p>
+                <p className="text-gray-700">!</p>
+                <p>ip domain name {config.domain_name}</p>
+                <p>ip ssh version 2</p>
+                <p>line vty 0 4</p>
+                <p className="ml-5">transport input ssh</p>
+                <p className="text-gray-700">!</p>
+                <p>crypto key generate rsa modulus 2048</p>
+                <p className="text-gray-700">!</p>
               </div>
             </div>
           </div>
