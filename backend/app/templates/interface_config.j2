@@ -1,23 +1,20 @@
-interface Port-channel{{ po_uplink_id }}
+interface Port-channel {{ po_uplink_id }}
  switchport
  switchport mode trunk
  switchport nonegotiate
 exit
 !
-
-{% for interface in interfaces %}
-interface {{ interface.name }}
-{% if interface.description %}
+{% for interface in interfaces -%}
+interface {{ interface.name }} {{ interface.port }}
+{% if interface.description -%}
  description {{ interface.description }}
-{% endif %}
+{% endif -%}
  switchport
  switchport mode trunk
  switchport nonegotiate
-{% if interface.channel_group %}
- channel-group {{ interface.channel_group }} mode active
-{% endif %}
+ channel-protocol lacp
+ channel-group {{ interface.channel_group or po_uplink_id }} mode active
  ip dhcp snooping trust
 exit
 !
-{% endfor %}
-
+{% endfor -%}
