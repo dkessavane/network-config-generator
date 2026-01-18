@@ -5,9 +5,20 @@ from typing import List, Optional
 from jinja2 import Environment, FileSystemLoader
 import os
 import ipaddress 
-
 from .config import settings 
 from motor.motor_asyncio import AsyncIOMotorClient
+import logging
+
+# --- 1. CONFIGURATION DU LOGGING ---
+logging.basicConfig(
+    level=settings.log_level,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.FileHandler("app.log"),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger("network-api")
 
 app = FastAPI()
 
@@ -16,10 +27,16 @@ client = AsyncIOMotorClient(settings.mongodb_url)
 db = client[settings.database_name]
 collection = db.get_collection("configs")
 
+origins = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
+
 # --- CORS MIDDLEWARE ---
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], 
+    allow_origins=origins,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -79,34 +96,57 @@ env = Environment(loader=FileSystemLoader(template_path))
 
 @app.post("/generate")
 async def generate_config(data: ConfigSchema):
-    """Generates the Cisco CLI configuration string using Jinja2 templates."""
+    """
+    Receives network parameters, loads the Jinja2 template, 
+    and returns the rendered Cisco CLI configuration.
+    """
+    logger.info(f"CLI generation request received for host: {data.hostname}")
     try:
+        # Load the specific template for Cisco switches
         template = env.get_template("main_switch_config.j2")
+        
+        # Render the template using the validated Pydantic data
         rendered = template.render(data.model_dump())
+        
         return {"config": rendered}
     except Exception as e:
+        # Log the specific error to app.log for troubleshooting
+        logger.error(f"Generation failed for {data.hostname}: {str(e)}")
         raise HTTPException(status_code=422, detail=str(e))
 
 @app.post("/save")
 async def save_to_db(data: ConfigSchema):
-    """Saves the configuration object to MongoDB."""
+    """
+    Converts the validated Pydantic model into a dictionary 
+    and persists it into the MongoDB 'configs' collection.
+    """
+    logger.info(f"Attempting to save configuration to DB for: {data.hostname}")
     try:
-        # data.model_dump() converts the Pydantic model (including interfaces) to a dict
+        # Convert Pydantic object to dict for MongoDB compatibility
         result = await collection.insert_one(data.model_dump())
+        
+        logger.info(f"Successfully saved {data.hostname} with ID: {result.inserted_id}")
         return {"status": "success", "id": str(result.inserted_id)}
     except Exception as e:
+        # Log database connection or insertion issues
+        logger.error(f"Database save error for {data.hostname}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
     
 @app.get("/history")
 async def get_history():
-    """Retrieves all previous configurations from the database."""
+    """
+    Retrieves all stored configurations from MongoDB 
+    and returns them as a list for the frontend history table.
+    """
+    logger.info("Fetching all configuration history from database")
     try:
         cursor = collection.find({})
         history = []
         async for document in cursor:
-            # Convert ObjectId to string for JSON serialization
+            # MongoDB ObjectIds are not JSON serializable by default, so we convert to string
             document["_id"] = str(document["_id"])
             history.append(document)
         return history
     except Exception as e:
+        logger.error(f"Failed to fetch history: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")

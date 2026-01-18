@@ -7,6 +7,9 @@ class Settings(BaseSettings):
     # Name of the database to be created
     database_name: str = "network_generator_db"
 
+    #Logging settings : INFO or DEBUG
+    log_level: str = "INFO"
+
     class Config:
         # Specifies the environment file to load
         env_file = ".env"
