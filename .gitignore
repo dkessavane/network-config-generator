@@ -10,3 +10,9 @@ frontend/dist/
 # IDE & OS
 .vscode/
 .DS_Store
+
+#MongoDB
+.env
+
+#Logging
+*.log
