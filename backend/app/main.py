@@ -9,17 +9,29 @@ from .config import settings
 from motor.motor_asyncio import AsyncIOMotorClient
 import logging
 
-# --- 1. CONFIGURATION DU LOGGING ---
-logging.basicConfig(
-    level=settings.log_level,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.FileHandler("app.log"),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger("network-api")
+# --- 1. LOGGING CONFIGURATION ---
 
+logger = logging.getLogger("network-api")
+logger.setLevel(settings.log_level)
+
+# Console Handler
+console_handler = logging.StreamHandler()
+formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+console_handler.setFormatter(formatter)
+logger.addHandler(console_handler)
+
+# Future File Handler saved into the standard Linux path /var/log/ (sudo !!)
+"""
+log_file_path = "/var/log/network_app.log"
+try:
+    # Ensure the directory exists and is writable before activating
+    file_handler = logging.FileHandler(log_file_path)
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+except Exception as e:
+    # Fail-safe: if the path is not accessible, we don't break the app
+    pass
+"""
 app = FastAPI()
 
 # --- DATABASE CONNECTION ---
@@ -45,7 +57,7 @@ app.add_middleware(
 
 class InterfaceSchema(BaseModel):
     name: str
-    port: str = Field(..., min_length=1) # REQUIRED: Interface port must be provided
+    port: str = Field(..., min_length=2) # REQUIRED: Interface port must be provided
     description: Optional[str] = ""
     channel_group: Optional[str] = "" 
 
@@ -65,7 +77,7 @@ class ConfigSchema(BaseModel):
     subnet_admin: str
     ip_gateway: str
     domain_name: str
-    interfaces: List[InterfaceSchema]
+    interfaces: List[InterfaceSchema] = Field(..., min_length=2)
 
     # IP Format Validation
     @field_validator('ip_admin', 'ip_gateway')
