@@ -8,6 +8,7 @@ import ipaddress
 from .config import settings 
 from motor.motor_asyncio import AsyncIOMotorClient
 import logging
+from bson import ObjectId
 
 # --- 1. LOGGING CONFIGURATION ---
 
@@ -162,3 +163,15 @@ async def get_history():
     except Exception as e:
         logger.error(f"Failed to fetch history: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+    
+@app.delete("/configurations/{config_id}")
+async def delete_configuration(config_id: str):
+    """
+    Deletes a specific network configuration from the database.
+    """
+    delete_result = await db.configs.delete_one({"_id": ObjectId(config_id)})
+
+    if delete_result.deleted_count == 1:
+        return {"message": "Configuration supprimée avec succès"}
+    
+    raise HTTPException(status_code=404, detail="Configuration non trouvée")

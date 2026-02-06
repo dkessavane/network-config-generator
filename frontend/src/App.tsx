@@ -23,7 +23,7 @@ function App() {
     { name: "TenGigabitEthernet", port: "1/0/2", description: "Uplink to Core 2", channel_group: "1" },
   ]);
 
-  const [errors, setErrors] = useState<string[]>([]); // State to track empty required fields
+  const [errors, setErrors] = useState<string[]>([]);
   const [copied, setCopied] = useState(false);
   const [showUserPass, setShowUserPass] = useState(false);
   const [showSecretPass, setShowSecretPass] = useState(false);
@@ -56,7 +56,6 @@ function App() {
   };
 
   const removeInterface = (index: number) => {
-    // Only allow deletion if index is greater than 1 (protecting first two default interfaces)
     if (index > 1) {
       setInterfaces(interfaces.filter((_, i) => i !== index));
     }
@@ -64,13 +63,11 @@ function App() {
 
   // --- HANDLERS ---
   const handleInputChange = (key: string, value: string) => {
-    // If the user types, remove the error highlight from the field
     if (errors.includes(key)) {
       setErrors(errors.filter(e => e !== key));
     }
 
     let finalValue = value;
-    // IP and Subnet mask validation (max 255 per octet, max 3 dots)
     if (key.includes("ip") || key.includes("subnet") || key === "ip_gateway") {
         let cleaned = value.replace(/[^0-9.]/g, "");
         cleaned = cleaned.replace(/\.\.+/g, ".");
@@ -89,14 +86,12 @@ function App() {
         }
         finalValue = cleaned;
     } 
-    // ID validation (Numbers only, Max VLAN 4094, Max Po 255)
     else if (key === "vlan_admin_id" || key === "po_uplink_id") {
         finalValue = value.replace(/[^0-9]/g, ""); 
         const num = parseInt(finalValue);
         if (key === "vlan_admin_id" && num > 4094) finalValue = "4094";
         if (key === "po_uplink_id" && num > 255) finalValue = "255";
     } 
-    // Hostname validation (No spaces)
     else if (key === "hostname") {
         finalValue = value.replace(/\s/g, "");
     }
@@ -118,6 +113,24 @@ function App() {
     } catch (e) { alert("API Offline"); }
   };
 
+  const deleteFromHistory = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation(); 
+    if (!window.confirm("Supprimer cette configuration ?")) return;
+
+    try {
+      const res = await fetch(`http://127.0.0.1:8000/configurations/${id}`, {
+        method: "DELETE",
+      });
+      if (res.ok) {
+        setHistory(history.filter(item => item._id !== id));
+      } else {
+        alert("Erreur lors de la suppression");
+      }
+    } catch (e) {
+      alert("Impossible de contacter l'API");
+    }
+  };
+
   const generateFullConfigText = () => {
     let text = `hostname ${config.hostname}\n!\n`;
     text += `username ${config.username} privilege 15 secret ${config.userpassword || "********"}\n`;
@@ -134,13 +147,12 @@ function App() {
   };
 
   const handleDownloadAndSave = async () => {
-    // 1. DETECTION OF EMPTY REQUIRED FIELDS
     const requiredFields = ['hostname', 'username', 'userpassword', 'secretpassword', 'ip_admin', 'subnet_admin', 'ip_gateway'];
     const newErrors = requiredFields.filter(field => !config[field as keyof typeof config]);
 
     if (newErrors.length > 0) {
-      setErrors(newErrors); // Highlight fields in red
-      return; // Stop execution
+      setErrors(newErrors);
+      return;
     }
 
     const payload = {
@@ -151,14 +163,12 @@ function App() {
     };
 
     try {
-      // Save to database
       await fetch("http://127.0.0.1:8000/save", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
       });
 
-      // Generate and download file
       const response = await fetch("http://127.0.0.1:8000/generate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -205,7 +215,7 @@ function App() {
           </div>
         </div>
 
-        {/* HISTORY MODAL */}
+        {/* HISTORY MODAL - FIXED CENTERING */}
         {showHistory && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
             <div className="bg-slate-900 border border-slate-700 w-full max-w-2xl rounded-[2rem] p-8 shadow-2xl flex flex-col max-h-[80vh]">
@@ -216,14 +226,24 @@ function App() {
               <input type="text" placeholder="Search..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-xl py-2 px-4 mb-4 outline-none focus:border-blue-500" />
               <div className="overflow-y-auto space-y-3 custom-scrollbar pr-2">
                 {history.filter(h => h.hostname.toLowerCase().includes(searchTerm.toLowerCase())).map((item) => (
-                  <div key={item._id} className="flex justify-between items-center p-4 bg-slate-800/50 border border-slate-700 rounded-xl hover:bg-slate-800 transition-colors">
+                  <div key={item._id} className="flex justify-between items-center p-4 bg-slate-800/50 border border-slate-700 rounded-xl hover:bg-slate-800 transition-colors group">
                     <div><p className="font-bold text-blue-300">{item.hostname}</p></div>
-                    <button onClick={() => { 
-                      const { _id, id, interfaces: savedIfaces, ...clean } = item;
-                      setConfig(clean as any);
-                      if (savedIfaces) setInterfaces([...savedIfaces]);
-                      setShowHistory(false); 
-                    }} className="bg-blue-600 px-4 py-2 rounded-lg text-xs font-bold hover:bg-blue-700">LOAD</button>
+                    <div className="flex items-center gap-3">
+                      {/* TRASH ICON BUTTON */}
+                      <button 
+                        onClick={(e) => deleteFromHistory(item._id, e)}
+                        className="p-2 text-gray-500 hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-all"
+                      >
+                        <Trash2 size={18} />
+                      </button>
+                      {/* LOAD BUTTON */}
+                      <button onClick={() => { 
+                        const { _id, id, interfaces: savedIfaces, ...clean } = item;
+                        setConfig(clean as any);
+                        if (savedIfaces) setInterfaces([...savedIfaces]);
+                        setShowHistory(false); 
+                      }} className="bg-blue-600 px-4 py-2 rounded-lg text-xs font-bold hover:bg-blue-700">LOAD</button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -234,13 +254,12 @@ function App() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-10 items-stretch flex-1 min-h-0 pb-4">
           <div className="flex flex-col gap-6 overflow-y-auto pr-2 custom-scrollbar">
             
-            {/* VARIABLES WITH RED OUTLINE ON ERROR */}
             <div className="bg-net-card/50 border border-slate-700 p-8 rounded-[2rem] shadow-2xl shrink-0">
               <div className="grid grid-cols-2 gap-4">
                 {Object.entries(config).map(([key, value]) => {
                   const isPass = key.includes("password");
                   const isVisible = key === "userpassword" ? showUserPass : showSecretPass;
-                  const hasError = errors.includes(key); // Check if this specific field has an error
+                  const hasError = errors.includes(key);
 
                   return (
                     <div key={key} className="flex flex-col gap-1 relative">
@@ -268,7 +287,6 @@ function App() {
               </div>
             </div>
 
-            {/* INTERFACES CARD */}
             <div className="bg-net-card/50 border border-slate-700 p-8 rounded-[2rem] shadow-2xl flex flex-col flex-1">
               <div className="flex justify-between items-center mb-6">
                 <p className="text-gray-300 text-xs uppercase tracking-widest font-bold font-mono">Interfaces</p>
@@ -279,7 +297,6 @@ function App() {
               <div className="space-y-4 overflow-y-auto pr-2 flex-1">
                 {interfaces.map((iface, index) => (
                   <div key={index} className="bg-black/30 border border-slate-700 rounded-xl p-4 grid grid-cols-4 gap-3 items-center relative group">
-                    {/* Delete button: Only visible for added links (index > 1) */}
                     {index > 1 && (
                       <button onClick={() => removeInterface(index)} className="absolute -top-2 -right-2 bg-red-900/80 p-1 rounded-full opacity-0 group-hover:opacity-100 transition-opacity">
                         <Trash2 size={12} className="text-red-200" />
@@ -295,7 +312,6 @@ function App() {
             </div>
           </div>
 
-          {/* OUTPUT VIEW */}
           <div className="flex flex-col h-full min-h-0">
             <div className="bg-black rounded-[2rem] p-6 shadow-2xl border border-slate-800 flex flex-col h-full overflow-hidden">
               <p className="text-green-400 text-center mb-4 font-mono text-sm uppercase tracking-widest border-b border-green-900/30 pb-2">OUTPUT</p>
