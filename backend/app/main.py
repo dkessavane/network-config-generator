@@ -1,164 +1,82 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, UploadFile, File, Body, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field, field_validator
-from typing import List, Optional
-from jinja2 import Environment, FileSystemLoader
-import os
-import ipaddress 
-from .config import settings 
+from fastapi.responses import PlainTextResponse
+import pandas as pd
+import io
+import nmap
+from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorClient
-import logging
+from typing import List
 
-# --- 1. LOGGING CONFIGURATION ---
-
-logger = logging.getLogger("network-api")
-logger.setLevel(settings.log_level)
-
-# Console Handler
-console_handler = logging.StreamHandler()
-formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-console_handler.setFormatter(formatter)
-logger.addHandler(console_handler)
-
-# Future File Handler saved into the standard Linux path /var/log/ (sudo !!)
-"""
-log_file_path = "/var/log/network_app.log"
-try:
-    # Ensure the directory exists and is writable before activating
-    file_handler = logging.FileHandler(log_file_path)
-    file_handler.setFormatter(formatter)
-    logger.addHandler(file_handler)
-except Exception as e:
-    # Fail-safe: if the path is not accessible, we don't break the app
-    pass
-"""
 app = FastAPI()
 
-# --- DATABASE CONNECTION ---
-client = AsyncIOMotorClient(settings.mongodb_url)
-db = client[settings.database_name]
-collection = db.get_collection("configs")
+# MongoDB connection setup
+client = AsyncIOMotorClient("mongodb://localhost:27017")
+db = client["ntt_network_db"]
+clients_collection = db.get_collection("clients")
+devices_collection = db.get_collection("configs")
 
-origins = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-]
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-# --- CORS MIDDLEWARE ---
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# --- CLIENT MANAGEMENT (TENANTS) ---
 
-# --- SCHEMAS ---
+@app.get("/clients")
+async def list_clients():
+    """Returns all registered clients from the database"""
+    cursor = clients_collection.find({})
+    return [{**doc, "_id": str(doc["_id"])} async for doc in cursor]
 
-class InterfaceSchema(BaseModel):
-    name: str
-    port: str = Field(..., min_length=2) # REQUIRED: Interface port must be provided
-    description: Optional[str] = ""
-    channel_group: Optional[str] = "" 
+@app.post("/clients")
+async def create_client(data: dict = Body(...)):
+    """Creates a new client. Name is mandatory"""
+    name = data.get("name", "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Client name is required")
+    result = await clients_collection.insert_one({"name": name})
+    return {"_id": str(result.inserted_id)}
 
-class ConfigSchema(BaseModel):
-    hostname: str = Field(..., min_length=1)
-    username: str
-    userpassword: str
-    secretpassword: str
-    
-    # VLAN limits according to IEEE 802.1Q standard (1-4094)
-    vlan_admin_id: int = Field(..., ge=1, le=4094) 
-    vlan_admin_name: str
-    # Port-Channel ID limits (usually 1-255 on most Cisco platforms)
-    po_uplink_id: int = Field(..., ge=1, le=255)
-    
-    ip_admin: str
-    subnet_admin: str
-    ip_gateway: str
-    domain_name: str
-    interfaces: List[InterfaceSchema] = Field(..., min_length=2)
+@app.delete("/clients/{client_id}")
+async def delete_client(client_id: str):
+    """Deletes a client and all associated switch configurations"""
+    await clients_collection.delete_one({"_id": ObjectId(client_id)})
+    await devices_collection.delete_many({"client_id": client_id})
+    return {"status": "deleted"}
 
-    # IP Format Validation
-    @field_validator('ip_admin', 'ip_gateway')
-    @classmethod
-    def validate_ip_format(cls, v: str):
-        try:
-            ipaddress.IPv4Address(v)
-            return v
-        except ValueError:
-            raise ValueError(f"'{v}' is not a valid IPv4 address.")
+# --- NETWORK TRACKER (NMAP) ---
 
-    # Subnet Mask Validation
-    @field_validator('subnet_admin')
-    @classmethod
-    def validate_mask_format(cls, v: str):
-        try:
-            ipaddress.IPv4Address(v)
-            return v
-        except ValueError:
-            raise ValueError(f"'{v}' is not a valid subnet mask.")
-
-# --- TEMPLATE ENGINE SETUP ---
-current_dir = os.path.dirname(os.path.abspath(__file__))
-template_path = os.path.join(current_dir, "templates")
-env = Environment(loader=FileSystemLoader(template_path))
-
-# --- ENDPOINTS ---
-
-@app.post("/generate")
-async def generate_config(data: ConfigSchema):
-    """
-    Receives network parameters, loads the Jinja2 template, 
-    and returns the rendered Cisco CLI configuration.
-    """
-    logger.info(f"CLI generation request received for host: {data.hostname}")
+@app.get("/clients/{client_id}/scan")
+async def scan_network(client_id: str, subnet: str = Query(..., example="192.168.1.0/24")):
+    """Uses Nmap binary to discover active hosts with open SSH ports"""
+    nm = nmap.PortScanner()
     try:
-        # Load the specific template for Cisco switches
-        template = env.get_template("main_switch_config.j2")
-        
-        # Render the template using the validated Pydantic data
-        rendered = template.render(data.model_dump())
-        
-        return {"config": rendered}
+        # Scanning port 22 (SSH) for discovery
+        nm.scan(hosts=subnet, arguments='-p 22 --open')
+        results = []
+        for host in nm.all_hosts():
+            if nm[host].has_tcp(22) and nm[host]['tcp'][22]['state'] == 'open':
+                results.append({
+                    "ip": host,
+                    "status": "Online",
+                    "vendor": nm[host].get('vendor', {})
+                })
+        return results
     except Exception as e:
-        # Log the specific error to app.log for troubleshooting
-        logger.error(f"Generation failed for {data.hostname}: {str(e)}")
-        raise HTTPException(status_code=422, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/save")
-async def save_to_db(data: ConfigSchema):
-    """
-    Converts the validated Pydantic model into a dictionary 
-    and persists it into the MongoDB 'configs' collection.
-    """
-    logger.info(f"Attempting to save configuration to DB for: {data.hostname}")
-    try:
-        # Convert Pydantic object to dict for MongoDB compatibility
-        result = await collection.insert_one(data.model_dump())
-        
-        logger.info(f"Successfully saved {data.hostname} with ID: {result.inserted_id}")
-        return {"status": "success", "id": str(result.inserted_id)}
-    except Exception as e:
-        # Log database connection or insertion issues
-        logger.error(f"Database save error for {data.hostname}: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
-    
-@app.get("/history")
-async def get_history():
-    """
-    Retrieves all stored configurations from MongoDB 
-    and returns them as a list for the frontend history table.
-    """
-    logger.info("Fetching all configuration history from database")
-    try:
-        cursor = collection.find({})
-        history = []
-        async for document in cursor:
-            # MongoDB ObjectIds are not JSON serializable by default, so we convert to string
-            document["_id"] = str(document["_id"])
-            history.append(document)
-        return history
-    except Exception as e:
-        logger.error(f"Failed to fetch history: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+# --- STAGING & BULK OPERATIONS ---
+
+@app.get("/history/{client_id}")
+async def get_history(client_id: str):
+    """Retrieves all switches for a specific tenant"""
+    cursor = devices_collection.find({"client_id": client_id})
+    return [{**doc, "_id": str(doc["_id"])} async for doc in cursor]
+
+@app.put("/clients/{client_id}/save-all")
+async def save_all(client_id: str, devices: List[dict] = Body(...)):
+    """Updates all switches in a single batch operation"""
+    for dev in devices:
+        dev_id = dev.get("_id")
+        if dev_id:
+            data = {k: v for k, v in dev.items() if k != "_id"}
+            await devices_collection.update_one({"_id": ObjectId(dev_id)}, {"$set": data})
+    return {"message": "All devices updated"}
